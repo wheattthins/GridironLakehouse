@@ -8,7 +8,8 @@
 #   DATABRICKS_HTTP_PATH  SQL Warehouse > Connection details > HTTP path
 #                         (e.g. /sql/1.0/warehouses/1234567890abcdef)
 #   DATABRICKS_TOKEN      personal access token
-#   DATABRICKS_CATALOG    optional, defaults to "workspace"
+#   DATABRICKS_CATALOG    optional, defaults to "gridiron". Must be the catalog
+#                         the ingestion job wrote the bronze tables to.
 #
 # dbt picks this file up when it is run from the transform/ directory.
 
@@ -22,7 +23,7 @@ gridiron_lakehouse:
       host: "{{ env_var('DATABRICKS_HOST') }}"
       http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
       token: "{{ env_var('DATABRICKS_TOKEN') }}"
-      catalog: "{{ env_var('DATABRICKS_CATALOG', 'workspace') }}"
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'gridiron') }}"
       schema: dev
       threads: 4
 
@@ -33,7 +34,7 @@ gridiron_lakehouse:
       host: "{{ env_var('DATABRICKS_HOST') }}"
       http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
       token: "{{ env_var('DATABRICKS_TOKEN') }}"
-      catalog: "{{ env_var('DATABRICKS_CATALOG', 'workspace') }}"
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'gridiron') }}"
       # Only used by a model that has no layer schema configured.
       schema: analytics
       threads: 8

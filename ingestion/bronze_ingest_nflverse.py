@@ -29,7 +29,7 @@ Usage
 Run as a Databricks job (Python script task) or from a notebook, on a workspace
 with Unity Catalog and outbound HTTPS access to github.com:
 
-    python bronze_ingest_nflverse.py --catalog workspace --schema bronze \
+    python bronze_ingest_nflverse.py --catalog gridiron --schema bronze \
         --start-season 2020 --end-season 2026
 """
 
@@ -106,7 +106,7 @@ class IngestConfig:
 
 def parse_args(argv: list[str] | None = None) -> IngestConfig:
     parser = argparse.ArgumentParser(description="Load nflverse data into bronze Delta tables.")
-    parser.add_argument("--catalog", default="workspace", help="Unity Catalog catalog (default: workspace)")
+    parser.add_argument("--catalog", default="gridiron", help="Unity Catalog catalog (default: gridiron)")
     parser.add_argument("--schema", default="bronze", help="Schema for the bronze tables (default: bronze)")
     parser.add_argument("--start-season", type=int, default=2020, help="First season to load (default: 2020)")
     parser.add_argument("--end-season", type=int, default=2026, help="Last season to load (default: 2026)")

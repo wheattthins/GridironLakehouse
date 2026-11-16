@@ -45,8 +45,16 @@ requirements.txt                 dbt-databricks
 ## Prerequisites
 
 - A Databricks workspace with Unity Catalog and a SQL Warehouse.
-- A catalog you can create schemas in. The examples use `workspace`. Substitute
-  your own in the job parameters and in `DATABRICKS_CATALOG`.
+- A catalog dedicated to this project, so its `bronze`, `silver` and `gold`
+  schemas cannot collide with another project's. The defaults use `gridiron`.
+  Create it once in the SQL editor:
+
+  ```sql
+  CREATE CATALOG IF NOT EXISTS gridiron;
+  ```
+
+  To use another name, pass it as `--catalog` to the job and set
+  `DATABRICKS_CATALOG` for dbt. Both must name the same catalog.
 - Compute for the ingestion job with outbound HTTPS access to `github.com` and
   `release-assets.githubusercontent.com` (release downloads redirect there).
 - Python 3.10 or newer on your machine for dbt (tested with 3.12).
@@ -58,7 +66,7 @@ requirements.txt                 dbt-databricks
    `ingestion/bronze_ingest_nflverse.py`, with these parameters:
 
    ```json
-   ["--catalog", "workspace", "--schema", "bronze", "--start-season", "2020", "--end-season", "2026"]
+   ["--catalog", "gridiron", "--schema", "bronze", "--start-season", "2020", "--end-season", "2026"]
    ```
 
 3. Run it. It creates the schema, a `landing` volume and both bronze tables.
@@ -83,7 +91,7 @@ Check the load:
 
 ```sql
 select season, count(*) as plays, max(_ingested_at) as loaded_at
-from workspace.bronze.bronze_nfl_pbp
+from gridiron.bronze.bronze_nfl_pbp
 group by season
 order by season;
 ```
@@ -106,7 +114,7 @@ environment variables. The host and HTTP path are on the warehouse's
 export DATABRICKS_HOST="dbc-a1b2c3d4-e5f6.cloud.databricks.com"   # no https://
 export DATABRICKS_HTTP_PATH="/sql/1.0/warehouses/1234567890abcdef"
 export DATABRICKS_TOKEN="<personal access token>"
-export DATABRICKS_CATALOG="workspace"                              # optional
+export DATABRICKS_CATALOG="gridiron"                               # optional, this is the default
 ```
 
 ```powershell
@@ -257,7 +265,7 @@ select
     round(season_completion_pct, 1) as completion_pct,
     round(season_td_int_ratio, 2) as td_int_ratio,
     round(season_late_down_epa_per_play, 3) as late_down_epa_per_play
-from workspace.gold.gold_qb_efficiency
+from gridiron.gold.gold_qb_efficiency
 where season = 2025
     and season_type = 'REG'
     and is_latest_game
@@ -292,7 +300,7 @@ Tests live next to the models in each layer's `schema.yml`.
 | Situation | Action |
 |---|---|
 | Ingestion job failed part-way | Run it again. Each season is replaced atomically, so there is nothing to clean up. |
-| A bad load reached bronze | `DESCRIBE HISTORY workspace.bronze.bronze_nfl_pbp`, then `RESTORE TABLE workspace.bronze.bronze_nfl_pbp TO VERSION AS OF <n>`, then `dbt build --full-refresh` to rebuild everything from the restored table. |
+| A bad load reached bronze | `DESCRIBE HISTORY gridiron.bronze.bronze_nfl_pbp`, then `RESTORE TABLE gridiron.bronze.bronze_nfl_pbp TO VERSION AS OF <n>`, then `dbt build --full-refresh` to rebuild everything from the restored table. |
 | `dbt build` stopped part-way (warehouse stopped, network) | `dbt retry` resumes from the failed node. |
 | `assert_fact_plays_reconciles_to_bronze` fails | nflverse removed or renumbered plays in a republished season, and a merge never deletes. Rebuild with `dbt build --full-refresh --select fact_plays+`. |
 | Inferred-member warning on `dim_players` | The player master is behind play-by-play. Re-run the ingestion job, then `dbt build`. |
