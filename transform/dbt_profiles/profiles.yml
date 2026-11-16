@@ -1,0 +1,35 @@
+# dbt profile for the scheduled job defined in databricks.yml.
+#
+# Local runs use ../profiles.yml. This one exists because a dbt task running on
+# Databricks gets its connection differently:
+#
+#   DBT_HOST, DBT_ACCESS_TOKEN  injected by Databricks for the identity the job
+#                               runs as, so no token is stored anywhere
+#   warehouse_http_path,        passed by the job's dbt command with --vars,
+#   catalog                     from the bundle variables in databricks.yml
+#
+# The target names match ../profiles.yml, because generate_schema_name decides
+# the schema names from the target name.
+
+gridiron_lakehouse:
+  target: dev
+
+  outputs:
+    dev:
+      type: databricks
+      host: "{{ env_var('DBT_HOST') }}"
+      token: "{{ env_var('DBT_ACCESS_TOKEN') }}"
+      http_path: "{{ var('warehouse_http_path') }}"
+      catalog: "{{ var('catalog', 'gridiron') }}"
+      schema: dev
+      threads: 8
+
+    prod:
+      type: databricks
+      host: "{{ env_var('DBT_HOST') }}"
+      token: "{{ env_var('DBT_ACCESS_TOKEN') }}"
+      http_path: "{{ var('warehouse_http_path') }}"
+      catalog: "{{ var('catalog', 'gridiron') }}"
+      # Only used by a model that has no layer schema configured.
+      schema: analytics
+      threads: 8

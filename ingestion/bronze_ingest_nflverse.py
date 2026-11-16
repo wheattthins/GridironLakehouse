@@ -21,16 +21,20 @@ Design notes
   one common schema before they are unioned.
 * Loads are idempotent. The play-by-play table is partitioned by ``season`` and a
   run atomically replaces only the seasons it downloaded (``replaceWhere``). The
-  weekly in-season refresh is therefore ``--start-season 2026 --end-season 2026``,
-  and a failed run is fixed by running it again.
+  weekly refresh therefore only reloads the season in progress
+  (``--current-season``), and a failed run is fixed by running it again.
 
 Usage
 -----
 Run as a Databricks job (Python script task) or from a notebook, on a workspace
 with Unity Catalog and outbound HTTPS access to github.com:
 
+    # initial load
     python bronze_ingest_nflverse.py --catalog gridiron --schema bronze \
         --start-season 2020 --end-season 2026
+
+    # scheduled refresh
+    python bronze_ingest_nflverse.py --catalog gridiron --schema bronze --current-season
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from functools import reduce
 
 import requests
@@ -104,15 +109,34 @@ class IngestConfig:
         return f"`{self.catalog}`.`{self.schema}`.`{name}`"
 
 
+def current_nfl_season(today: date | None = None) -> int:
+    """Return the season in progress, or the most recent one during the off-season.
+
+    A season is named after the year it starts in and runs from September to the
+    Super Bowl in February, so January to August still belong to the year before.
+    """
+    today = today or date.today()
+    return today.year if today.month >= 9 else today.year - 1
+
+
 def parse_args(argv: list[str] | None = None) -> IngestConfig:
     parser = argparse.ArgumentParser(description="Load nflverse data into bronze Delta tables.")
     parser.add_argument("--catalog", default="gridiron", help="Unity Catalog catalog (default: gridiron)")
     parser.add_argument("--schema", default="bronze", help="Schema for the bronze tables (default: bronze)")
     parser.add_argument("--start-season", type=int, default=2020, help="First season to load (default: 2020)")
     parser.add_argument("--end-season", type=int, default=2026, help="Last season to load (default: 2026)")
+    parser.add_argument(
+        "--current-season",
+        action="store_true",
+        help="Load only the season in progress, ignoring --start-season and --end-season. "
+        "For the scheduled refresh, so the schedule never needs editing when a new season starts.",
+    )
 
     # parse_known_args: notebooks and job launchers put entries of their own in argv.
     args, _ = parser.parse_known_args(argv)
+
+    if args.current_season:
+        args.start_season = args.end_season = current_nfl_season()
 
     if not FIRST_NFLVERSE_SEASON <= args.start_season <= args.end_season:
         parser.error(

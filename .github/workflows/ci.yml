@@ -58,6 +58,18 @@ jobs:
           DATABRICKS_TOKEN: placeholder
         run: dbt parse --profiles-dir . --target prod
 
+      # The scheduled job (databricks.yml) has a profile of its own. Parse with
+      # the same --vars the job passes, so a broken job profile fails here and
+      # not in the weekly run.
+      - name: Parse with the scheduled job's profile
+        working-directory: transform
+        env:
+          DBT_HOST: ci.invalid
+          DBT_ACCESS_TOKEN: placeholder
+        run: >-
+          dbt parse --profiles-dir dbt_profiles --target prod
+          --vars "{ warehouse_http_path: /sql/1.0/warehouses/ci, catalog: gridiron }"
+
       - name: Load bronze sample into DuckDB
         run: python ci/load_bronze_duckdb.py --seasons 2023 2024
 

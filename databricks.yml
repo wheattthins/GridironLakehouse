@@ -1,0 +1,91 @@
+# Databricks Asset Bundle: the weekly refresh job, defined as code.
+#
+#   databricks bundle validate           check this file against the workspace
+#   databricks bundle deploy             dev: creates the job paused, named "[dev <you>] ..."
+#   databricks bundle run weekly_refresh run it once, now
+#   databricks bundle deploy -t prod     prod: the weekly schedule is live
+#
+# The bundle target also picks the dbt target, so a dev deployment builds the
+# dev_* schemas and a prod deployment builds staging, silver and gold.
+
+bundle:
+  name: gridiron_lakehouse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog the pipeline reads from and writes to.
+    default: gridiron
+  warehouse_id:
+    description: SQL Warehouse the dbt models run on. Resolved by name, so no workspace-specific id lives in the repo.
+    lookup:
+      warehouse: Serverless Starter Warehouse
+
+# Upload only the code the job runs. The .env file at the repo root is never
+# part of a deployment.
+sync:
+  paths:
+    - ingestion
+    - transform
+
+resources:
+  jobs:
+    weekly_refresh:
+      name: gridiron_weekly_refresh
+
+      # Wednesdays at 10:00 UTC. nflverse has published Monday night's game by then.
+      schedule:
+        quartz_cron_expression: "0 0 10 ? * WED"
+        timezone_id: UTC
+
+      tasks:
+        # 1. Reload the season in progress into bronze. Replaces that season's
+        #    partition atomically, so a rerun is always safe.
+        - task_key: bronze_ingest
+          environment_key: ingestion
+          spark_python_task:
+            python_file: ./ingestion/bronze_ingest_nflverse.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --schema
+              - bronze
+              - --current-season
+
+        # 2. Rebuild the dimensions, merge the new plays into the fact, rebuild
+        #    gold, and run every test. Only starts if the ingestion succeeded.
+        - task_key: dbt_build
+          depends_on:
+            - task_key: bronze_ingest
+          environment_key: dbt
+          dbt_task:
+            project_directory: ./transform
+            # Relative to project_directory. Holds the profile for deployed runs.
+            profiles_directory: dbt_profiles/
+            commands:
+              - 'dbt deps --target=${bundle.target}'
+              - 'dbt build --target=${bundle.target} --vars "{ warehouse_http_path: /sql/1.0/warehouses/${var.warehouse_id}, catalog: ${var.catalog} }"'
+
+      # Serverless compute. The ingestion script needs nothing beyond what the
+      # base environment provides; the dbt task needs the adapter.
+      environments:
+        - environment_key: ingestion
+          spec:
+            environment_version: "5"
+        - environment_key: dbt
+          spec:
+            environment_version: "5"
+            dependencies:
+              - dbt-databricks>=1.13,<1.14
+
+targets:
+  dev:
+    # Development mode prefixes the job name with "[dev <user>]" and pauses its
+    # schedule, so a dev deployment only ever runs when you trigger it.
+    mode: development
+    default: true
+
+  prod:
+    mode: production
+    workspace:
+      # An explicit path guarantees there is only one production copy.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

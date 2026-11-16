@@ -40,14 +40,41 @@ every dataset is in [`dashboards/`](dashboards/).
 
 *Every play in `fact_plays`, 2020 to 2026, by play type.*
 
+## What the data shows
+
+Three results from the 2020 to 2026 seasons. The queries are in
+[`analysis/`](analysis/) and [`dashboards/`](dashboards/).
+
+- **Trusting a source flag would understate completion percentage by about
+  four points.** nflverse sets `pass_attempt` on sacks as well as on
+  passes: 8,773 of them in these seasons. Completions divided by that flag give
+  a league completion rate of 60.3%. The official definition (completions,
+  incompletions and interceptions) gives 64.6%. This is why `fact_plays` derives
+  `is_pass_attempt` instead of passing the flag through, and why the gold
+  table's season lines match official statistics.
+- **Late-down efficiency only weakly carries over from one season to the
+  next.** Across 135 pairs of consecutive seasons by the same quarterback (200
+  or more dropbacks in each), EPA per play on 3rd and 4th down correlates at
+  0.29 from one year to the next, against 0.41 for completion percentage. Last
+  season's late-down number explains under a tenth of the variation in the next
+  one, so it describes what happened better than it predicts what will.
+- **Passing is least efficient in cool weather.** Outdoors at 32 to 49°F a
+  dropback is worth 0.009 EPA on average, against 0.061 at 70°F and above and
+  0.040 indoors, and completion percentage is more than two points lower than
+  indoors (63.2% against 65.6%). Games below freezing do not continue the trend
+  (0.037 EPA), but that is by far the smallest group at 4,938 dropbacks. These
+  are raw averages that do not adjust for which teams play in cold stadiums.
+
 ## Repository layout
 
 ```
+databricks.yml                   the weekly refresh job, defined as code
 ingestion/
   bronze_ingest_nflverse.py      PySpark job: nflverse -> landing volume -> Delta
 transform/                       dbt project
   dbt_project.yml                layers, schemas, materializations, vars
   profiles.yml                   SQL Warehouse connection, secrets from env vars
+  dbt_profiles/profiles.yml      connection profile for the scheduled job
   packages.yml                   dbt_utils
   macros/                        schema naming, flag casting, safe ratio
   models/staging/                sources.yml + rename/cast views
@@ -60,6 +87,7 @@ ci/                              run the dbt project on DuckDB, no warehouse nee
   requirements.txt               dbt-duckdb
 .github/workflows/ci.yml         builds and tests every pull request
 dashboards/                      SQL for each dashboard dataset
+analysis/                        queries behind the findings
 docs/                            dashboard screenshots
 requirements.txt                 dbt-databricks
 ```
@@ -105,9 +133,10 @@ What the job does:
 - **Writes Delta partitioned by `season`**, replacing only the seasons it loaded
   (`replaceWhere`). Re-running is always safe.
 
-For the weekly in-season refresh, schedule the same task with
-`--start-season 2026 --end-season 2026`. A season that nflverse has not published
-yet is skipped with a warning.
+For a refresh, pass `--current-season` instead of a season range. It reloads
+only the season in progress, working out which one that is from the date, so
+the schedule never needs editing. A season that nflverse has not published yet
+is skipped with a warning. Step 4 schedules this.
 
 Check the load:
 
@@ -181,6 +210,46 @@ dbt source freshness                      # warn if bronze is more than 8 days o
 dbt build --select gold_qb_efficiency --vars '{qb_rolling_window_games: 6}'
 dbt docs generate && dbt docs serve       # lineage graph and data dictionary
 ```
+
+## Step 4. Schedule the weekly refresh
+
+`databricks.yml` is a Databricks Asset Bundle that defines the pipeline as one
+job, so the schedule and its settings are versioned with the code instead of
+being clicked together in the UI.
+
+```mermaid
+flowchart LR
+    cron["Wednesdays 10:00 UTC"] --> ingest["bronze_ingest<br/>reload the current season"]
+    ingest -->|"on success"| dbt["dbt_build<br/>dbt deps, dbt build"]
+```
+
+- **`bronze_ingest`** runs the ingestion script with `--current-season`.
+- **`dbt_build`** starts only if the ingestion succeeded. It merges the new
+  plays into `fact_plays`, rebuilds the dimensions and gold, and runs every
+  test.
+- Both tasks run on serverless compute. The dbt task authenticates as the
+  identity the job runs as, through the `DBT_HOST` and `DBT_ACCESS_TOKEN`
+  variables Databricks injects, so the job stores no token
+  (`transform/dbt_profiles/profiles.yml`).
+- The SQL Warehouse is looked up by name, so no workspace-specific id is
+  committed. Change the name under `variables` in `databricks.yml` if yours is
+  not called `Serverless Starter Warehouse`.
+
+Install the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html),
+then from the repository root:
+
+```bash
+databricks auth login --host https://<workspace hostname>
+
+databricks bundle validate             # check the definition against the workspace
+databricks bundle deploy               # dev: job is created paused, named "[dev <you>] ..."
+databricks bundle run weekly_refresh   # run it once, now
+databricks bundle deploy -t prod       # prod: the weekly schedule is live
+```
+
+The bundle target also selects the dbt target. A `dev` deployment builds the
+`dev_*` schemas and never runs on its own. The `prod` deployment builds
+`staging`, `silver` and `gold` every week.
 
 ## The star schema
 
@@ -322,8 +391,9 @@ Tests live next to the models in each layer's `schema.yml`.
 Every pull request and every push to `main` runs `.github/workflows/ci.yml`. It
 needs no Databricks credentials, because it runs the dbt project on DuckDB:
 
-1. Parses the project with the Databricks adapter, to catch errors in the
-   production profile and model configs.
+1. Parses the project with the Databricks adapter, once with the local
+   production profile and once with the scheduled job's profile, to catch
+   errors in either and in the model configs.
 2. Loads two real seasons of nflverse data into a DuckDB file with
    `ci/load_bronze_duckdb.py`. The 2023 and 2024 files disagree on a column
    type, so the sample includes real schema drift.

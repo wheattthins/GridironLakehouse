@@ -5,6 +5,9 @@ transform/logs/
 transform/.user.yml
 logs/
 
+# Databricks CLI state for bundle deployments
+.databricks/
+
 # Local DuckDB database used by CI and local development
 *.duckdb
 *.duckdb.wal
