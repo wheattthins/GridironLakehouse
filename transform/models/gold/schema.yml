@@ -1,0 +1,164 @@
+version: 2
+
+models:
+  - name: gold_qb_efficiency
+    description: >
+      Quarterback efficiency features, one row per quarterback per game. Each
+      row carries that game's line, the season-to-date totals through that game
+      (season_*) and a trailing window over the quarterback's most recent games
+      of the season (rolling_*). Regular season and playoffs accumulate
+      separately. Filter on is_latest_game for one row of season totals per
+      quarterback.
+    data_tests:
+      # The windows order a quarterback's games by week, which is only
+      # well-defined with at most one game per quarterback per week.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - player_id
+              - season
+              - season_type
+              - week
+      # A wider window can never hold fewer dropbacks than a narrower one.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "season_dropbacks >= rolling_dropbacks and rolling_dropbacks >= dropbacks"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "completions <= pass_attempts"
+    columns:
+      # Keys and context
+      - name: qb_game_key
+        description: Primary key. Surrogate hash of player_id and game_id.
+        data_tests:
+          - unique
+          - not_null
+      - name: player_id
+        description: Foreign key to dim_players. Always a player whose position is QB.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_players')
+                field: player_id
+      - name: player_name
+        description: Quarterback's display name.
+      - name: team
+        description: Team the quarterback played for in this game.
+      - name: season
+        description: Season of the game.
+        data_tests:
+          - not_null
+      - name: season_type
+        description: REG or POST. Features accumulate within one season type.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['REG', 'POST']
+      - name: week
+        description: Week of the game.
+        data_tests:
+          - not_null
+      - name: game_id
+        description: Foreign key to dim_games.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_games')
+                field: game_id
+      - name: game_date
+        description: Calendar date of the game.
+      - name: is_latest_game
+        description: True on the quarterback's most recent game of the season and season type. That row's season_* columns are the quarterback's season totals.
+      - name: season_games_played
+        description: Games with at least one dropback or pass attempt this season, through this game.
+      - name: rolling_games_played
+        description: Games inside the rolling window. Below the window size early in the season.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: "{{ var('qb_rolling_window_games') }}"
+
+      # This game
+      - name: dropbacks
+        description: Dropbacks in this game (passes thrown, sacks and scrambles).
+      - name: pass_attempts
+        description: Official pass attempts in this game. Spikes count, sacks do not.
+      - name: completions
+        description: Completed passes in this game.
+      - name: passing_yards
+        description: Passing yards in this game.
+      - name: passing_touchdowns
+        description: Passing touchdowns in this game.
+      - name: interceptions
+        description: Interceptions thrown in this game.
+      - name: completion_pct
+        description: Completion percentage in this game, 0 to 100. NULL without a pass attempt.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: td_int_ratio
+        description: Passing touchdowns per interception in this game. NULL without an interception.
+      - name: late_down_dropbacks
+        description: Dropbacks on 3rd and 4th down in this game. Sample size behind late_down_epa_per_play.
+      - name: late_down_epa_per_play
+        description: Mean EPA per dropback on 3rd and 4th down in this game. NULL without a late-down dropback.
+
+      # Season to date
+      - name: season_dropbacks
+        description: Dropbacks this season, through this game.
+      - name: season_pass_attempts
+        description: Official pass attempts this season, through this game.
+      - name: season_completions
+        description: Completed passes this season, through this game.
+      - name: season_passing_yards
+        description: Passing yards this season, through this game.
+      - name: season_passing_touchdowns
+        description: Passing touchdowns this season, through this game.
+      - name: season_interceptions
+        description: Interceptions thrown this season, through this game.
+      - name: season_completion_pct
+        description: Completion percentage this season, through this game, 0 to 100.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: season_td_int_ratio
+        description: Passing touchdowns per interception this season, through this game. NULL until the first interception.
+      - name: season_late_down_dropbacks
+        description: Dropbacks on 3rd and 4th down this season, through this game.
+      - name: season_late_down_epa_per_play
+        description: Mean EPA per dropback on 3rd and 4th down this season, through this game.
+
+      # Rolling window
+      - name: rolling_dropbacks
+        description: Dropbacks over the rolling window.
+      - name: rolling_pass_attempts
+        description: Official pass attempts over the rolling window.
+      - name: rolling_completions
+        description: Completed passes over the rolling window.
+      - name: rolling_passing_yards
+        description: Passing yards over the rolling window.
+      - name: rolling_passing_touchdowns
+        description: Passing touchdowns over the rolling window.
+      - name: rolling_interceptions
+        description: Interceptions thrown over the rolling window.
+      - name: rolling_completion_pct
+        description: Completion percentage over the rolling window, 0 to 100.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: rolling_td_int_ratio
+        description: Passing touchdowns per interception over the rolling window. NULL without an interception in the window.
+      - name: rolling_late_down_dropbacks
+        description: Dropbacks on 3rd and 4th down over the rolling window.
+      - name: rolling_late_down_epa_per_play
+        description: Mean EPA per dropback on 3rd and 4th down over the rolling window.

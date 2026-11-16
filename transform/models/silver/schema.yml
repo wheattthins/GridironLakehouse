@@ -1,0 +1,359 @@
+version: 2
+
+# Star schema contract. `dbt build` runs these tests right after each model is
+# built and skips everything downstream of a failure, so a broken dimension or
+# an orphaned fact row never reaches the gold layer.
+#
+#   unique / not_null    primary keys and required attributes
+#   accepted_values      closed domains (downs, season type, roof, ...)
+#   accepted_range       numeric bounds (dbt_utils)
+#   relationships        referential integrity, fact -> dimension
+#   expression_is_true   row-level business rules (dbt_utils)
+
+models:
+  # ------------------------------------------------------------------------- #
+  # dim_players
+  # ------------------------------------------------------------------------- #
+  - name: dim_players
+    description: >
+      Player dimension, one row per player (Type 1). Sourced from the nflverse
+      player master, plus an inferred-member row for any player that
+      play-by-play references before the master lists them.
+    columns:
+      - name: player_id
+        description: Primary key. NFL GSIS player id, e.g. 00-0033873.
+        data_tests:
+          - unique
+          - not_null
+      - name: player_name
+        description: Display name. Inferred members carry the short play-by-play form (P.Mahomes).
+        data_tests:
+          - not_null
+      - name: first_name
+        description: Legal first name.
+      - name: last_name
+        description: Last name.
+      - name: position
+        description: Latest listed position (QB, WR, CB, ...). UNK for inferred members.
+        data_tests:
+          - not_null
+      - name: position_group
+        description: Position family the position rolls up to. UNK for inferred members.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'DB', 'SPEC', 'UNK']
+      - name: height_inches
+        description: Height in inches.
+      - name: weight_lbs
+        description: Weight in pounds.
+      - name: birth_date
+        description: Date of birth.
+      - name: college_name
+        description: College or colleges attended.
+      - name: rookie_season
+        description: First NFL season.
+      - name: last_season
+        description: Most recent NFL season the player appeared on a roster.
+      - name: latest_team
+        description: Most recent team abbreviation.
+      - name: roster_status
+        description: Latest roster status code from the player master (ACT, RET, ...).
+      - name: draft_year
+        description: Draft year. NULL for undrafted players.
+      - name: draft_round
+        description: Draft round. NULL for undrafted players.
+      - name: draft_pick
+        description: Overall draft pick. NULL for undrafted players.
+      - name: is_inferred_member
+        description: True when the row was built from play-by-play because the player master does not list the player yet.
+        data_tests:
+          - not_null
+          # A warning, not an error: the pipeline is still consistent, but the
+          # player master is behind and should be re-ingested.
+          - accepted_values:
+              arguments:
+                values: [false]
+                quote: false
+              config:
+                severity: warn
+
+  # ------------------------------------------------------------------------- #
+  # dim_games
+  # ------------------------------------------------------------------------- #
+  - name: dim_games
+    description: Game dimension, one row per game played, with schedule, result, venue and weather.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "home_team <> away_team"
+    columns:
+      - name: game_id
+        description: Primary key. nflverse game id in the form season_week_away_home, e.g. 2020_01_HOU_KC.
+        data_tests:
+          - unique
+          - not_null
+      - name: season
+        description: Season the game belongs to. A January playoff game belongs to the season that started the previous September.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1999
+      - name: season_type
+        description: REG for the regular season, POST for the playoffs.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['REG', 'POST']
+      - name: week
+        description: Week of the season. Numbering continues into the playoffs, so the Super Bowl is week 22.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 22
+      - name: game_date
+        description: Calendar date of the game.
+        data_tests:
+          - not_null
+      - name: home_team
+        description: Home team abbreviation.
+        data_tests:
+          - not_null
+      - name: away_team
+        description: Away team abbreviation.
+        data_tests:
+          - not_null
+      - name: home_score
+        description: Final score of the home team.
+      - name: away_score
+        description: Final score of the away team.
+      - name: winning_team
+        description: Abbreviation of the winner. NULL for a tie.
+      - name: home_coach
+        description: Head coach of the home team.
+      - name: away_coach
+        description: Head coach of the away team.
+      - name: is_division_game
+        description: True when both teams play in the same division.
+      - name: stadium_id
+        description: Stable stadium identifier. Survives stadium renames.
+      - name: stadium_name
+        description: Stadium name at the time of the game.
+        data_tests:
+          - not_null
+      - name: is_neutral_site
+        description: True for games with no real home team, such as international games and the Super Bowl.
+      - name: roof
+        description: Roof type and state.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['outdoors', 'dome', 'closed', 'open']
+      - name: surface
+        description: Playing surface (grass, fieldturf, ...). NULL when not recorded.
+      - name: temperature_f
+        description: Temperature at kickoff in degrees Fahrenheit. NULL for most indoor games.
+      - name: wind_mph
+        description: Wind speed at kickoff in miles per hour. NULL for most indoor games.
+      - name: weather_description
+        description: Free-text weather report from the game book.
+
+  # ------------------------------------------------------------------------- #
+  # fact_plays
+  # ------------------------------------------------------------------------- #
+  - name: fact_plays
+    description: >
+      Play fact, one row per play. Every game key resolves to dim_games and
+      every non-null player key resolves to dim_players.
+    data_tests:
+      # Passing yards are only ever credited on a completed pass.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "passing_yards is null or is_complete_pass"
+    columns:
+      # Keys
+      - name: play_key
+        description: Primary key. Surrogate hash of game_id and play_id.
+        data_tests:
+          - unique
+          - not_null
+      - name: game_id
+        description: Foreign key to dim_games.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_games')
+                field: game_id
+      - name: play_id
+        description: Play identifier within the game. Increases through the game but is not consecutive.
+        data_tests:
+          - not_null
+      - name: dropback_player_id
+        description: Foreign key to dim_players. The quarterback on a dropback, whether it ended in a pass, a sack or a scramble. NULL on spikes.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_players')
+                field: player_id
+      - name: passer_player_id
+        description: Foreign key to dim_players. The player who threw the pass or took the sack. NULL on scrambles.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_players')
+                field: player_id
+      - name: rusher_player_id
+        description: Foreign key to dim_players. The ball carrier on a rush.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_players')
+                field: player_id
+      - name: receiver_player_id
+        description: Foreign key to dim_players. The targeted receiver on a pass.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_players')
+                field: player_id
+
+      # Degenerate dimensions
+      - name: season
+        description: Season of the game. Repeated from dim_games because it is the partition column.
+        data_tests:
+          - not_null
+      - name: possession_team
+        description: Abbreviation of the team with the ball.
+      - name: defense_team
+        description: Abbreviation of the team on defense.
+      - name: play_type
+        description: Play category (pass, run, punt, field_goal, kickoff, no_play, ...). NULL on rows that are not plays.
+      - name: play_description
+        description: Official text description of the play.
+
+      # Situation
+      - name: quarter
+        description: Quarter of the game. 5 and 6 are overtime periods.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 6
+      - name: down
+        description: Down, 1 to 4. NULL on plays without a down (kickoffs, extra points, two-point attempts).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4]
+                quote: false
+      - name: yards_to_go
+        description: Yards needed for a first down.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: yardline_100
+        description: Distance in yards from the opponent's end zone.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: is_goal_to_go
+        description: True when the line to gain is the goal line.
+      - name: game_seconds_remaining
+        description: Seconds left in regulation at the snap.
+      - name: half_seconds_remaining
+        description: Seconds left in the half at the snap.
+      - name: score_differential
+        description: Possession team score minus defense team score before the play.
+      - name: possession_team_score
+        description: Possession team score before the play.
+      - name: defense_team_score
+        description: Defense team score before the play.
+      - name: is_shotgun
+        description: True when the offense lined up in shotgun.
+      - name: is_no_huddle
+        description: True when the offense did not huddle.
+
+      # Outcome flags
+      - name: is_qb_dropback
+        description: True when the quarterback dropped back, covering passes thrown, sacks and scrambles. False on spikes.
+        data_tests:
+          - not_null
+      - name: is_qb_scramble
+        description: True when the quarterback scrambled.
+      - name: is_pass_attempt
+        description: True for an official pass attempt, meaning a completion, an incompletion or an interception. A spike counts as an incompletion. Sacks are excluded.
+        data_tests:
+          - not_null
+      - name: is_complete_pass
+        description: True when the pass was completed.
+      - name: is_interception
+        description: True when the pass was intercepted.
+      - name: is_sack
+        description: True when the quarterback was sacked.
+      - name: is_rush_attempt
+        description: True for a rushing attempt.
+      - name: is_touchdown
+        description: True when the play ended in a touchdown for either team.
+      - name: is_pass_touchdown
+        description: True for a passing touchdown.
+      - name: is_rush_touchdown
+        description: True for a rushing touchdown.
+      - name: is_first_down
+        description: True when the play earned a first down.
+      - name: is_fumble_lost
+        description: True when the offense lost a fumble.
+      - name: is_penalty
+        description: True when a penalty was called on the play.
+      - name: is_two_point_attempt
+        description: True for a two-point conversion attempt.
+      - name: is_successful_play
+        description: True when the play added expected points (epa > 0).
+
+      # Measures
+      - name: yards_gained
+        description: Net yards gained by the offense, penalties excluded.
+      - name: passing_yards
+        description: Passing yards credited to the passer. NULL unless the pass was completed.
+      - name: rushing_yards
+        description: Rushing yards credited to the rusher.
+      - name: receiving_yards
+        description: Receiving yards credited to the receiver.
+      - name: air_yards
+        description: Distance the ball travelled past the line of scrimmage on a pass.
+      - name: yards_after_catch
+        description: Yards the receiver gained after the catch.
+      - name: epa
+        description: Expected points added by the play, from the possession team's point of view.
+      - name: wpa
+        description: Win probability added by the play, from the possession team's point of view.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -1
+                max_value: 1
+      - name: expected_points
+        description: Expected points for the possession team before the play.
+      - name: win_probability
+        description: Possession team's win probability before the play.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+      # Audit
+      - name: _ingested_at
+        description: When the bronze ingestion run wrote the source row. Watermark for the incremental load.
+        data_tests:
+          - not_null

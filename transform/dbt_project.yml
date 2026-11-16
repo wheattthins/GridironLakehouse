@@ -1,0 +1,45 @@
+name: gridiron_lakehouse
+version: "1.0.0"
+config-version: 2
+
+# Must match the top-level key in profiles.yml.
+profile: gridiron_lakehouse
+
+require-dbt-version: [">=1.12.0", "<2.0.0"]
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+vars:
+  # Schema the ingestion job writes the raw Delta tables to.
+  bronze_schema: bronze
+  # Trailing window, in games, behind the rolling_* columns of gold_qb_efficiency.
+  qb_rolling_window_games: 4
+
+models:
+  gridiron_lakehouse:
+    # One folder per layer. Each layer gets its own schema; see
+    # macros/generate_schema_name.sql for how the schema name is built per target.
+    staging:
+      +schema: staging
+      +materialized: view
+
+    silver:
+      +schema: silver
+      +materialized: table
+      # Publish the model and column descriptions as Unity Catalog comments.
+      +persist_docs:
+        relation: true
+        columns: true
+
+    gold:
+      +schema: gold
+      +materialized: table
+      +persist_docs:
+        relation: true
+        columns: true

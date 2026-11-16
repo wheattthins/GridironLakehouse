@@ -1,0 +1,39 @@
+# Connection profile for a Databricks SQL Warehouse.
+#
+# No secrets live in this file. Everything sensitive is read from environment
+# variables, so it is safe to commit and works unchanged in CI:
+#
+#   DATABRICKS_HOST       workspace hostname, without https://
+#                         (e.g. dbc-a1b2c3d4-e5f6.cloud.databricks.com)
+#   DATABRICKS_HTTP_PATH  SQL Warehouse > Connection details > HTTP path
+#                         (e.g. /sql/1.0/warehouses/1234567890abcdef)
+#   DATABRICKS_TOKEN      personal access token
+#   DATABRICKS_CATALOG    optional, defaults to "workspace"
+#
+# dbt picks this file up when it is run from the transform/ directory.
+
+gridiron_lakehouse:
+  target: dev
+
+  outputs:
+    # Development: models build into dev_staging, dev_silver and dev_gold.
+    dev:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'workspace') }}"
+      schema: dev
+      threads: 4
+
+    # Production: models build into staging, silver and gold.
+    # Run with: dbt build --target prod
+    prod:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'workspace') }}"
+      # Only used by a model that has no layer schema configured.
+      schema: analytics
+      threads: 8

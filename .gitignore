@@ -1,0 +1,22 @@
+# dbt
+transform/target/
+transform/dbt_packages/
+transform/logs/
+transform/.user.yml
+logs/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Secrets and local environment
+.env
+.env.*
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

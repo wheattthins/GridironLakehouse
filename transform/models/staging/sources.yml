@@ -1,0 +1,55 @@
+version: 2
+
+sources:
+  - name: nflverse
+    description: >
+      Raw nflverse release data, loaded as-is into Delta by
+      ingestion/bronze_ingest_nflverse.py. Nothing but dbt staging models
+      should read these tables.
+    database: "{{ target.database }}"
+    schema: "{{ var('bronze_schema') }}"
+    loader: ingestion/bronze_ingest_nflverse.py
+
+    # `dbt source freshness` warns when the ingestion job has stopped running.
+    # In season nflverse republishes the current season every night.
+    config:
+      loaded_at_field: _ingested_at
+      freshness:
+        warn_after: {count: 8, period: day}
+
+    tables:
+      - name: bronze_nfl_pbp
+        description: Play-by-play, one row per play, partitioned by season. 372 nflverse columns plus audit columns.
+        columns:
+          - name: game_id
+            description: nflverse game identifier, e.g. 2020_01_HOU_KC.
+            data_tests:
+              - not_null
+          - name: play_id
+            description: Play identifier, unique within a game only.
+            data_tests:
+              - not_null
+          - name: season
+            description: Season the game belongs to. Partition column.
+            data_tests:
+              - not_null
+          - name: _ingested_at
+            description: When the ingestion run wrote the row. Incremental watermark for fact_plays.
+            data_tests:
+              - not_null
+        # Tests on sources run before any model is built, so a bad load stops
+        # here instead of flowing into the star schema.
+        data_tests:
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns:
+                  - game_id
+                  - play_id
+
+      - name: bronze_nfl_players
+        description: Player master, one row per player. Full snapshot replaced on every ingestion run.
+        columns:
+          - name: gsis_id
+            description: NFL GSIS player id, e.g. 00-0033873. The same id play-by-play uses.
+            data_tests:
+              - unique

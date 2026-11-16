@@ -1,0 +1,31 @@
+version: 2
+
+# Staging models are views that rename and cast bronze columns. They are kept
+# thin on tests: raw-data checks live on the sources, business rules on the
+# star schema in models/silver/schema.yml.
+
+models:
+  - name: stg_nflverse__plays
+    description: Play-by-play with warehouse column names and types. One row per play.
+    columns:
+      - name: game_id
+        description: nflverse game identifier.
+        data_tests:
+          - not_null
+      - name: play_id
+        description: Play identifier, unique within a game.
+        data_tests:
+          - not_null
+      - name: game_date
+        description: Calendar date of the game, cast from the source string.
+        data_tests:
+          - not_null
+
+  - name: stg_nflverse__players
+    description: nflverse player master with warehouse column names and types. One row per player.
+    columns:
+      - name: player_id
+        description: NFL GSIS player id.
+        data_tests:
+          - unique
+          - not_null

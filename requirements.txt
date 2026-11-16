@@ -1,0 +1,4 @@
+# Local tooling for the dbt project in transform/.
+# Installs dbt Core 1.12 as a dependency. The ingestion script needs no local
+# install: it runs on Databricks, where PySpark and requests are provided.
+dbt-databricks>=1.13,<1.14
