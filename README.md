@@ -27,6 +27,19 @@ flowchart LR
 | Silver | dbt tables | `dim_games`, `dim_players`, `fact_plays` |
 | Gold | dbt table | `gold_qb_efficiency` |
 
+## Dashboard
+
+A Databricks AI/BI dashboard reads the gold and silver tables. The SQL behind
+every dataset is in [`dashboards/`](dashboards/).
+
+![Current-season quarterback leaderboard ranked by EPA per play on 3rd and 4th down](docs/qb_leaderboard.png)
+
+*Current-season quarterbacks ranked by EPA per play on 3rd and 4th down, from `gold_qb_efficiency`.*
+
+![Number of plays by play type across the 2020 to 2026 seasons](docs/plays_by_type.png)
+
+*Every play in `fact_plays`, 2020 to 2026, by play type.*
+
 ## Repository layout
 
 ```
@@ -46,6 +59,8 @@ ci/                              run the dbt project on DuckDB, no warehouse nee
   profiles.yml                   DuckDB connection profile
   requirements.txt               dbt-duckdb
 .github/workflows/ci.yml         builds and tests every pull request
+dashboards/                      SQL for each dashboard dataset
+docs/                            dashboard screenshots
 requirements.txt                 dbt-databricks
 ```
 
