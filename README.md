@@ -1,5 +1,7 @@
 # GridironLakehouse
 
+[![CI](https://github.com/wheattthins/GridironLakehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/wheattthins/GridironLakehouse/actions/workflows/ci.yml)
+
 A medallion lakehouse for NFL play-by-play on Databricks. It ingests the open
 [nflverse](https://github.com/nflverse/nflverse-data) data with PySpark, models it
 as a Kimball star schema with dbt Core, and publishes a quarterback efficiency
@@ -39,6 +41,11 @@ transform/                       dbt project
   models/silver/                 star schema + schema.yml (tests and docs)
   models/gold/                   gold_qb_efficiency + schema.yml
   tests/                         bronze-to-fact reconciliation test
+ci/                              run the dbt project on DuckDB, no warehouse needed
+  load_bronze_duckdb.py          builds the bronze tables in a DuckDB file
+  profiles.yml                   DuckDB connection profile
+  requirements.txt               dbt-duckdb
+.github/workflows/ci.yml         builds and tests every pull request
 requirements.txt                 dbt-databricks
 ```
 
@@ -294,6 +301,34 @@ Tests live next to the models in each layer's `schema.yml`.
   inferred-member check on `dim_players`, which is a warning.
 - Add `--store-failures` to any `dbt build` or `dbt test` to save the failing rows
   to a table for inspection.
+
+## Continuous integration
+
+Every pull request and every push to `main` runs `.github/workflows/ci.yml`. It
+needs no Databricks credentials, because it runs the dbt project on DuckDB:
+
+1. Parses the project with the Databricks adapter, to catch errors in the
+   production profile and model configs.
+2. Loads two real seasons of nflverse data into a DuckDB file with
+   `ci/load_bronze_duckdb.py`. The 2023 and 2024 files disagree on a column
+   type, so the sample includes real schema drift.
+3. Runs `dbt build`: every model and every test.
+4. Reloads bronze and runs `dbt build` again, so the incremental merge into
+   `fact_plays` is exercised as well.
+
+DuckDB is not Databricks. CI proves the SQL logic and the tests. Delta-specific
+behaviour, such as partitioning and the Delta `MERGE` itself, is only exercised
+when the project runs on Databricks.
+
+The same checks run locally, which also makes a fast development loop:
+
+```bash
+pip install -r requirements.txt -r ci/requirements.txt
+export GRIDIRON_DUCKDB_PATH="$PWD/gridiron.duckdb"   # PowerShell: $env:GRIDIRON_DUCKDB_PATH = "$PWD\gridiron.duckdb"
+python ci/load_bronze_duckdb.py --seasons 2023 2024
+cd transform
+dbt build --profiles-dir ../ci
+```
 
 ## Recovery
 

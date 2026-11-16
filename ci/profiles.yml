@@ -1,0 +1,19 @@
+# DuckDB profile for CI and for local development without a SQL Warehouse.
+#
+# Run from the transform/ directory:
+#
+#   dbt build --profiles-dir ../ci
+#
+# The target is not named "prod", so models build into ci_staging, ci_silver
+# and ci_gold (see transform/macros/generate_schema_name.sql).
+
+gridiron_lakehouse:
+  target: ci
+
+  outputs:
+    ci:
+      type: duckdb
+      # The file ci/load_bronze_duckdb.py wrote the bronze tables to.
+      path: "{{ env_var('GRIDIRON_DUCKDB_PATH') }}"
+      schema: ci
+      threads: 4

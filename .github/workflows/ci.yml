@@ -1,0 +1,75 @@
+name: CI
+
+# Builds every dbt model and runs every data test on DuckDB, against two real
+# seasons of nflverse data. No Databricks credentials are involved, so the
+# checks cost nothing and also run on pull requests from forks.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the run that is still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dbt:
+    name: dbt build and test (DuckDB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Shared by ci/load_bronze_duckdb.py and ci/profiles.yml.
+      GRIDIRON_DUCKDB_PATH: ${{ github.workspace }}/gridiron.duckdb
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            ci/requirements.txt
+
+      - name: Install dbt
+        run: pip install -r requirements.txt -r ci/requirements.txt
+
+      - name: Install dbt packages
+        working-directory: transform
+        run: dbt deps --profiles-dir ../ci
+
+      # The DuckDB build below never loads the production profile, so parse the
+      # project once with the Databricks adapter to catch errors in it. Parsing
+      # does not connect to anything; the values are placeholders.
+      - name: Parse with the Databricks adapter
+        working-directory: transform
+        env:
+          DATABRICKS_HOST: ci.invalid
+          DATABRICKS_HTTP_PATH: /sql/1.0/warehouses/ci
+          DATABRICKS_TOKEN: placeholder
+        run: dbt parse --profiles-dir . --target prod
+
+      - name: Load bronze sample into DuckDB
+        run: python ci/load_bronze_duckdb.py --seasons 2023 2024
+
+      - name: Build and test (initial load)
+        working-directory: transform
+        run: dbt build --profiles-dir ../ci
+
+      # Reloading bronze stamps a new _ingested_at on every row, so the second
+      # build takes the incremental path and merges into fact_plays.
+      - name: Reload bronze to simulate a refresh
+        run: python ci/load_bronze_duckdb.py --seasons 2023 2024
+
+      - name: Build and test (incremental merge)
+        working-directory: transform
+        run: dbt build --profiles-dir ../ci

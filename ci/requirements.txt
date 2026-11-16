@@ -1,0 +1,5 @@
+# Extra tooling for CI and for running the dbt project locally on DuckDB.
+# Install together with the main file:
+#
+#   pip install -r requirements.txt -r ci/requirements.txt
+dbt-duckdb>=1.11,<1.12
